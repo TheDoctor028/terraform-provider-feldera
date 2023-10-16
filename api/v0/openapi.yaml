@@ -1,0 +1,2885 @@
+openapi: 3.0.3
+info:
+  title: Feldera API
+  description: >-
+
+    With Feldera, users create data pipelines out of SQL programs and data
+    connectors. A SQL program comprises tables and views. Connectors feed data
+    to input tables in a program or receive outputs computed by views.
+
+
+    This API allows users to create and manage data pipelines, and the programs
+
+    and connectors that comprise these pipelines.
+
+
+    # API concepts
+
+
+    * *Program*.  A SQL program with a unique name and a unique ID
+      attached to it. A program contains tables and views. A program
+      needs to be compiled before it can be executed in a pipeline.
+
+    * *Connector*. A data connector that can be used to feed input data to
+
+    SQL tables or consume outputs from SQL views. Every connector
+
+    has a unique name and identifier. We currently support Kafka and Redpanda.
+
+    We also support directly ingesting and consuming data via HTTP;
+
+    see the `pipelines/{pipeline_id}/ingress` and
+    `pipelines/{pipeline_id}/egress`
+
+    endpoints.
+
+
+    * *Pipeline*.  A pipeline is a running instance of a program and
+
+    some attached connectors. A client can create multiple pipelines that make
+    use of
+
+    the same program and connectors. Every pipeline has a unique name and
+    identifier.
+
+    Deploying a pipeline instantiates the pipeline with the then latest version
+    of
+
+    the referenced program and connectors. This allows the API to accumulate
+    edits
+
+    to programs and connectors before use in a pipeline.
+
+
+    # Concurrency
+
+
+    All programs and pipelines have an associated *version*. This is done to
+    prevent
+
+    race conditions due to multiple users accessing the same
+
+    program or configuration concurrently.  An example is user 1 modifying the
+    program,
+
+    while user 2 is starting a pipeline for the same program. It would be
+    confusing
+
+    if the pipeline could end up running the old or the new version.
+
+
+    A version is a monotonically increasing number, associated with each
+
+    program and pipeline. Every request to compile the program or start a
+
+    pipeline must include the program id and version number. If the version
+    number
+
+    isn't equal to the current version in the database, this means that the
+
+    last version of the program observed by the client is outdated, so the
+
+    request is rejected.
+  license:
+    name: MIT OR Apache-2.0
+  version: 0.1.7
+servers:
+  - url: /v0
+paths:
+  /../config/authentication:
+    get:
+      tags:
+        - Manager
+      summary: Get authentication provider configuration
+      description: Get authentication provider configuration
+      operationId: get_authentication_config
+      responses:
+        '200':
+          description: >-
+            The response body contains Authentication Provider configuration, or
+            is empty if no auth is configured.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthProvider'
+        '500':
+          description: Request failed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /connectors:
+    get:
+      tags:
+        - Connectors
+      summary: Fetch connectors, optionally filtered by name or ID
+      description: Fetch connectors, optionally filtered by name or ID
+      operationId: list_connectors
+      parameters:
+        - name: id
+          in: query
+          description: Unique connector identifier.
+          required: false
+          schema:
+            type: string
+            format: uuid
+            nullable: true
+        - name: name
+          in: query
+          description: Unique connector name.
+          required: false
+          schema:
+            type: string
+            nullable: true
+      responses:
+        '200':
+          description: List of connectors retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ConnectorDescr'
+        '404':
+          description: Specified connector name or ID does not exist
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                Unknown connector ID:
+                  value:
+                    details:
+                      connector_id: d764b9e2-19f2-4572-ba20-8b42641b07c4
+                    error_code: UnknownConnector
+                    message: >-
+                      Unknown connector id
+                      'd764b9e2-19f2-4572-ba20-8b42641b07c4'
+                Unknown connector name:
+                  value:
+                    details:
+                      name: unknown_name
+                    error_code: UnknownName
+                    message: An entity with name unknown_name was not found
+    post:
+      tags:
+        - Connectors
+      summary: Create a new connector.
+      description: Create a new connector.
+      operationId: new_connector
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewConnectorRequest'
+        required: true
+      responses:
+        '200':
+          description: Connector successfully created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NewConnectorResp'
+  /connectors/{connector_id}:
+    get:
+      tags:
+        - Connectors
+      summary: Fetch a connector by ID.
+      description: Fetch a connector by ID.
+      operationId: get_connector
+      parameters:
+        - name: connector_id
+          in: path
+          description: Unique connector identifier
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Connector retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorDescr'
+        '400':
+          description: Specified connector id is not a valid uuid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details:
+                  error: >-
+                    invalid character: expected an optional prefix of
+                    `urn:uuid:` followed by [0-9a-fA-F-], found `n` at 1
+                  value: not_a_uuid
+                error_code: InvalidUuidParam
+                message: >-
+                  Invalid UUID string 'not_a_uuid': 'invalid character: expected
+                  an optional prefix of `urn:uuid:` followed by [0-9a-fA-F-],
+                  found `n` at 1'
+    delete:
+      tags:
+        - Connectors
+      summary: Delete an existing connector.
+      description: Delete an existing connector.
+      operationId: delete_connector
+      parameters:
+        - name: connector_id
+          in: path
+          description: Unique connector identifier
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: connector successfully deleted.
+        '400':
+          description: Specified connector id is not a valid uuid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details:
+                  error: >-
+                    invalid character: expected an optional prefix of
+                    `urn:uuid:` followed by [0-9a-fA-F-], found `n` at 1
+                  value: not_a_uuid
+                error_code: InvalidUuidParam
+                message: >-
+                  Invalid UUID string 'not_a_uuid': 'invalid character: expected
+                  an optional prefix of `urn:uuid:` followed by [0-9a-fA-F-],
+                  found `n` at 1'
+        '404':
+          description: Specified connector id does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details:
+                  connector_id: d764b9e2-19f2-4572-ba20-8b42641b07c4
+                error_code: UnknownConnector
+                message: Unknown connector id 'd764b9e2-19f2-4572-ba20-8b42641b07c4'
+    patch:
+      tags:
+        - Connectors
+      summary: Change a connector's name, description or configuration.
+      description: Change a connector's name, description or configuration.
+      operationId: update_connector
+      parameters:
+        - name: connector_id
+          in: path
+          description: Unique connector identifier
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateConnectorRequest'
+        required: true
+      responses:
+        '200':
+          description: connector successfully updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateConnectorResp'
+        '404':
+          description: Specified connector id does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details:
+                  connector_id: d764b9e2-19f2-4572-ba20-8b42641b07c4
+                error_code: UnknownConnector
+                message: Unknown connector id 'd764b9e2-19f2-4572-ba20-8b42641b07c4'
+  /pipelines:
+    get:
+      tags:
+        - Pipelines
+      summary: Fetch pipelines, optionally filtered by name or ID.
+      description: Fetch pipelines, optionally filtered by name or ID.
+      operationId: list_pipelines
+      parameters:
+        - name: id
+          in: query
+          description: Unique pipeline id.
+          required: false
+          schema:
+            type: string
+            format: uuid
+            nullable: true
+        - name: name
+          in: query
+          description: Unique pipeline name.
+          required: false
+          schema:
+            type: string
+            nullable: true
+      responses:
+        '200':
+          description: Pipeline list retrieved successfully.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Pipeline'
+    post:
+      tags:
+        - Pipelines
+      summary: Create a new pipeline.
+      description: Create a new pipeline.
+      operationId: new_pipeline
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewPipelineRequest'
+        required: true
+      responses:
+        '200':
+          description: Pipeline successfully created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NewPipelineResp'
+        '404':
+          description: Specified program id or connector ids do not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                Unknown connector:
+                  description: One or more connector ids do not exist.
+                  value:
+                    details:
+                      connector_id: d764b9e2-19f2-4572-ba20-8b42641b07c4
+                    error_code: UnknownConnector
+                    message: >-
+                      Unknown connector id
+                      'd764b9e2-19f2-4572-ba20-8b42641b07c4'
+                Unknown program:
+                  description: Specified program id does not exist
+                  value:
+                    details:
+                      program_id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+                    error_code: UnknownProgram
+                    message: Unknown program id '67e55044-10b1-426f-9247-bb680e5fe0c8'
+  /pipelines/{pipeline_id}:
+    get:
+      tags:
+        - Pipelines
+      summary: Fetch a pipeline by ID.
+      description: Fetch a pipeline by ID.
+      operationId: get_pipeline
+      parameters:
+        - name: pipeline_id
+          in: path
+          description: Unique pipeline identifier
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Pipeline descriptor retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pipeline'
+              example:
+                cpu_profiler: false
+                inputs:
+                  Input-To-Table:
+                    format:
+                      config: null
+                      name: csv
+                    max_buffered_records: 1000000
+                    stream: my_input_table
+                    transport:
+                      config:
+                        auto.offset.reset: earliest
+                        group.instance.id: group0
+                        topics:
+                          - test_input1
+                      name: kafka
+                max_buffering_delay_usecs: 0
+                min_batch_size_records: 0
+                name: pipeline-67e55044-10b1-426f-9247-bb680e5fe0c8
+                outputs:
+                  Output-To-View:
+                    format:
+                      config: null
+                      name: csv
+                    max_buffered_records: 1000000
+                    stream: my_output_view
+                    transport:
+                      config:
+                        auto.offset.reset: earliest
+                        group.instance.id: group0
+                        topics:
+                          - test_input2
+                      name: kafka
+                workers: 8
+        '404':
+          description: Specified pipeline ID does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details:
+                  pipeline_id: 2e79afe1-ff4d-44d3-af5f-9397de7746c0
+                error_code: UnknownPipeline
+                message: Unknown pipeline id '2e79afe1-ff4d-44d3-af5f-9397de7746c0'
+    delete:
+      tags:
+        - Pipelines
+      summary: Delete a pipeline. The pipeline must be in the shutdown state.
+      description: Delete a pipeline. The pipeline must be in the shutdown state.
+      operationId: pipeline_delete
+      parameters:
+        - name: pipeline_id
+          in: path
+          description: Unique pipeline identifier
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Pipeline successfully deleted.
+        '400':
+          description: Pipeline ID is invalid or pipeline is already running.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                Invalid Pipeline ID:
+                  value:
+                    details:
+                      error: >-
+                        invalid character: expected an optional prefix of
+                        `urn:uuid:` followed by [0-9a-fA-F-], found `n` at 1
+                      value: not_a_uuid
+                    error_code: InvalidUuidParam
+                    message: >-
+                      Invalid UUID string 'not_a_uuid': 'invalid character:
+                      expected an optional prefix of `urn:uuid:` followed by
+                      [0-9a-fA-F-], found `n` at 1'
+                Pipeline is running:
+                  description: >-
+                    Pipeline cannot be deleted while executing. Shutdown the
+                    pipeline first.
+                  value:
+                    details:
+                      current_status: Running
+                      desired_status: Running
+                      error: >-
+                        Cannot delete a running pipeline. Shutdown the pipeline
+                        first by invoking the '/shutdown' endpoint.
+                      pipeline_id: 2e79afe1-ff4d-44d3-af5f-9397de7746c0
+                      requested_status: null
+                    error_code: IllegalPipelineStateTransition
+                    message: >-
+                      Action is not applicable in the current state of the
+                      pipeline: Cannot delete a running pipeline. Shutdown the
+                      pipeline first by invoking the '/shutdown' endpoint.
+        '404':
+          description: Specified pipeline id does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details:
+                  pipeline_id: 2e79afe1-ff4d-44d3-af5f-9397de7746c0
+                error_code: UnknownPipeline
+                message: Unknown pipeline id '2e79afe1-ff4d-44d3-af5f-9397de7746c0'
+    patch:
+      tags:
+        - Pipelines
+      summary: >-
+        Change a pipeline's name, description, code, configuration, or
+        connectors.
+      description: >-
+        Change a pipeline's name, description, code, configuration, or
+        connectors.
+
+        On success, increments the pipeline's version by 1.
+      operationId: update_pipeline
+      parameters:
+        - name: pipeline_id
+          in: path
+          description: Unique pipeline identifier
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePipelineRequest'
+        required: true
+      responses:
+        '200':
+          description: Pipeline successfully updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdatePipelineResp'
+        '404':
+          description: Specified pipeline or connector id does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                Unknown connector ID:
+                  value:
+                    details:
+                      connector_id: d764b9e2-19f2-4572-ba20-8b42641b07c4
+                    error_code: UnknownConnector
+                    message: >-
+                      Unknown connector id
+                      'd764b9e2-19f2-4572-ba20-8b42641b07c4'
+                Unknown pipeline ID:
+                  value:
+                    details:
+                      pipeline_id: 2e79afe1-ff4d-44d3-af5f-9397de7746c0
+                    error_code: UnknownPipeline
+                    message: Unknown pipeline id '2e79afe1-ff4d-44d3-af5f-9397de7746c0'
+  /pipelines/{pipeline_id}/config:
+    get:
+      tags:
+        - Pipelines
+      summary: Fetch a pipeline's configuration.
+      description: |-
+        Fetch a pipeline's configuration.
+
+        When defining a pipeline, clients have to provide an optional
+        `RuntimeConfig` for the pipelines and references to existing
+        connectors to attach to the pipeline. This endpoint retrieves
+        the *expanded* definition of the pipeline's configuration,
+        which comprises both the `RuntimeConfig` and the complete
+        definitions of the attached connectors.
+      operationId: get_pipeline_config
+      parameters:
+        - name: pipeline_id
+          in: path
+          description: Unique pipeline identifier
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Expanded pipeline configuration retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineConfig'
+        '404':
+          description: Specified pipeline ID does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details:
+                  pipeline_id: 2e79afe1-ff4d-44d3-af5f-9397de7746c0
+                error_code: UnknownPipeline
+                message: Unknown pipeline id '2e79afe1-ff4d-44d3-af5f-9397de7746c0'
+  /pipelines/{pipeline_id}/deployed:
+    get:
+      tags:
+        - Pipelines
+      summary: Return the currently deployed version of the pipeline, if any.
+      description: Return the currently deployed version of the pipeline, if any.
+      operationId: pipeline_deployed
+      parameters:
+        - name: pipeline_id
+          in: path
+          description: Unique pipeline identifier
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: >-
+            Last deployed version of the pipeline retrieved successfully
+            (returns null if pipeline was never deployed yet).
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PipelineRevision'
+                nullable: true
+        '404':
+          description: Specified `pipeline_id` does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details:
+                  pipeline_id: 2e79afe1-ff4d-44d3-af5f-9397de7746c0
+                error_code: UnknownPipeline
+                message: Unknown pipeline id '2e79afe1-ff4d-44d3-af5f-9397de7746c0'
+  /pipelines/{pipeline_id}/egress/{table_name}:
+    post:
+      tags:
+        - Pipelines
+      summary: Subscribe to a stream of updates from a SQL view or table.
+      description: >-
+        Subscribe to a stream of updates from a SQL view or table.
+
+
+        The pipeline responds with a continuous stream of changes to the
+        specified
+
+        table or view, encoded using the format specified in the `?format=`
+
+        parameter. Updates are split into `Chunk`'s.
+
+
+        The pipeline continuous sending updates until the client closes the
+
+        connection or the pipeline is shut down.
+      operationId: http_output
+      parameters:
+        - name: pipeline_id
+          in: path
+          description: Unique pipeline identifier.
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: table_name
+          in: path
+          description: SQL table or view name.
+          required: true
+          schema:
+            type: string
+        - name: format
+          in: query
+          description: Output data format, e.g., 'csv' or 'json'.
+          required: true
+          schema:
+            type: string
+        - name: query
+          in: query
+          description: >-
+            Query to execute on the table. Must be one of 'table',
+            'neighborhood', or 'quantiles'. The default value is 'table'
+          required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/OutputQuery'
+            nullable: true
+        - name: mode
+          in: query
+          description: >-
+            Output mode. Must be one of 'watch' or 'snapshot'. The default value
+            is 'watch'
+          required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/EgressMode'
+            nullable: true
+        - name: quantiles
+          in: query
+          description: >-
+            For 'quantiles' queries: the number of quantiles to output. The
+            default value is 100.
+          required: false
+          schema:
+            type: integer
+            format: int32
+            nullable: true
+            minimum: 0
+        - name: array
+          in: query
+          description: >-
+            Set to `true` to group updates in this stream into JSON arrays (used
+            in conjunction with `format=json`). The default value is `false`
+          required: false
+          schema:
+            type: boolean
+            nullable: true
+      requestBody:
+        description: >-
+          When the `query` parameter is set to 'neighborhood', the body of the
+          request must contain a neighborhood specification.
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/NeighborhoodQuery'
+              nullable: true
+        required: false
+      responses:
+        '200':
+          description: >-
+            Connection to the endpoint successfully established. The body of the
+            response contains a stream of data chunks.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Chunk'
+        '400':
+          description: Unknown data format specified in the '?format=' argument.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Specified table or view does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '410':
+          description: >-
+            Pipeline is not currently running because it has been shutdown or
+            not yet started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details:
+                  pipeline_id: 2e79afe1-ff4d-44d3-af5f-9397de7746c0
+                error_code: PipelineShutdown
+                message: >-
+                  Pipeline 2e79afe1-ff4d-44d3-af5f-9397de7746c0 is not currently
+                  running.
+        '500':
+          description: Request failed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /pipelines/{pipeline_id}/ingress/{table_name}:
+    post:
+      tags:
+        - Pipelines
+      summary: Push data to a SQL table.
+      description: >-
+        Push data to a SQL table.
+
+
+        The client sends data encoded using the format specified in the
+        `?format=`
+
+        parameter as a body of the request.  The contents of the data must match
+
+        the SQL table schema specified in `table_name`
+
+
+        The pipeline ingests data as it arrives without waiting for the end of
+
+        the request.  Successful HTTP response indicates that all data has been
+
+        ingested successfully.
+      operationId: http_input
+      parameters:
+        - name: pipeline_id
+          in: path
+          description: Unique pipeline identifier.
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: table_name
+          in: path
+          description: SQL table name.
+          required: true
+          schema:
+            type: string
+        - name: force
+          in: query
+          description: >-
+            When `true`, push data to the pipeline even if the pipeline is
+            paused. The default value is `false`
+          required: true
+          schema:
+            type: boolean
+        - name: format
+          in: query
+          description: Input data format, e.g., 'csv' or 'json'.
+          required: true
+          schema:
+            type: string
+        - name: array
+          in: query
+          description: >-
+            Set to `true` if updates in this stream are packaged into JSON
+            arrays (used in conjunction with `format=json`). The default values
+            is `false`.
+          required: false
+          schema:
+            type: boolean
+            nullable: true
+        - name: update_format
+          in: query
+          description: >-
+            JSON data change event format (used in conjunction with
+            `format=json`).  The default value is 'insert_delete'.
+          required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/JsonUpdateFormat'
+            nullable: true
+      requestBody:
+        description: Contains the new input data in CSV.
+        content:
+          text/csv:
+            schema:
+              type: string
+        required: true
+      responses:
+        '200':
+          description: Data successfully delivered to the pipeline.
+        '400':
+          description: Error parsing input data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: >-
+            Pipeline is not currently running because it has been shutdown or
+            not yet started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details:
+                  pipeline_id: 2e79afe1-ff4d-44d3-af5f-9397de7746c0
+                error_code: PipelineShutdown
+                message: >-
+                  Pipeline 2e79afe1-ff4d-44d3-af5f-9397de7746c0 is not currently
+                  running.
+        '500':
+          description: Request failed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /pipelines/{pipeline_id}/stats:
+    get:
+      tags:
+        - Pipelines
+      summary: Retrieve pipeline metrics and performance counters.
+      description: Retrieve pipeline metrics and performance counters.
+      operationId: pipeline_stats
+      parameters:
+        - name: pipeline_id
+          in: path
+          description: Unique pipeline identifier
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Pipeline metrics retrieved successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Specified pipeline id is not a valid uuid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details:
+                  error: >-
+                    invalid character: expected an optional prefix of
+                    `urn:uuid:` followed by [0-9a-fA-F-], found `n` at 1
+                  value: not_a_uuid
+                error_code: InvalidUuidParam
+                message: >-
+                  Invalid UUID string 'not_a_uuid': 'invalid character: expected
+                  an optional prefix of `urn:uuid:` followed by [0-9a-fA-F-],
+                  found `n` at 1'
+        '404':
+          description: Specified pipeline id does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details:
+                  pipeline_id: 2e79afe1-ff4d-44d3-af5f-9397de7746c0
+                error_code: UnknownPipeline
+                message: Unknown pipeline id '2e79afe1-ff4d-44d3-af5f-9397de7746c0'
+  /pipelines/{pipeline_id}/validate:
+    get:
+      tags:
+        - Pipelines
+      summary: Validate a pipeline.
+      description: |-
+        Validate a pipeline.
+
+        Checks whether a pipeline is configured correctly. This includes
+        checking whether the pipeline references a valid compiled program,
+        whether the connectors reference valid tables/views in the program,
+        and more.
+      operationId: pipeline_validate
+      parameters:
+        - name: pipeline_id
+          in: path
+          description: Unique pipeline identifier
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Validate a Pipeline config.
+          content:
+            application/json:
+              schema:
+                type: string
+        '400':
+          description: Invalid pipeline.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                Invalid Pipeline ID:
+                  description: Specified pipeline id is not a valid uuid.
+                  value:
+                    details:
+                      error: >-
+                        invalid character: expected an optional prefix of
+                        `urn:uuid:` followed by [0-9a-fA-F-], found `n` at 1
+                      value: not_a_uuid
+                    error_code: InvalidUuidParam
+                    message: >-
+                      Invalid UUID string 'not_a_uuid': 'invalid character:
+                      expected an optional prefix of `urn:uuid:` followed by
+                      [0-9a-fA-F-], found `n` at 1'
+                Invalid table or view reference:
+                  description: Connectors reference a view that doesn't exist.
+                  value:
+                    details:
+                      missing:
+                        - - ac_name
+                          - my_view
+                    error_code: ViewsNotInSchema
+                    message: >-
+                      Pipeline configuration specifies invalid connector->view
+                      pairs 'ac_name -> my_view': The view(s) don't exist in the
+                      program
+                Invalid table reference:
+                  description: Connectors reference a table that doesn't exist.
+                  value:
+                    details:
+                      missing:
+                        - - ac_name
+                          - my_table
+                    error_code: TablesNotInSchema
+                    message: >-
+                      Pipeline configuration specifies invalid connector->table
+                      pairs 'ac_name -> my_table': The table(s) don't exist in
+                      the program
+                Program has compilation errors:
+                  description: >-
+                    The program associated with the pipeline raised compilation
+                    error.
+                  value:
+                    details: null
+                    error_code: ProgramFailedToCompile
+                    message: >-
+                      The program attached to the pipeline did not compile
+                      successfully
+                Program not compiled:
+                  description: >-
+                    The program associated with this pipeline has not been
+                    compiled.
+                  value:
+                    details: null
+                    error_code: ProgramNotCompiled
+                    message: >-
+                      The program attached to the pipeline hasn't been compiled
+                      yet.
+                Program not set:
+                  description: Pipeline does not have a program set.
+                  value:
+                    details: null
+                    error_code: ProgramNotSet
+                    message: The pipeline does not have a program attached
+        '404':
+          description: Specified pipeline id does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details:
+                  pipeline_id: 2e79afe1-ff4d-44d3-af5f-9397de7746c0
+                error_code: UnknownPipeline
+                message: Unknown pipeline id '2e79afe1-ff4d-44d3-af5f-9397de7746c0'
+  /pipelines/{pipeline_id}/{action}:
+    post:
+      tags:
+        - Pipelines
+      summary: Change the desired state of the pipeline.
+      description: >-
+        Change the desired state of the pipeline.
+
+
+        This endpoint allows the user to control the execution of the pipeline,
+
+        by changing its desired state attribute (see the discussion of the
+        desired
+
+        state model in the [`PipelineStatus`] documentation).
+
+
+        The endpoint returns immediately after validating the request and
+        forwarding
+
+        it to the pipeline. The requested status change completes
+        asynchronously.
+
+        On success, the pipeline enters the requested desired state.  On error,
+        the
+
+        pipeline transitions to the `Failed` state. The user
+
+        can monitor the current status of the pipeline by polling the `GET
+
+        /pipeline` endpoint.
+
+
+        The following values of the `action` argument are accepted by this
+        endpoint:
+
+
+        - 'start': Start processing data.
+
+        - 'pause': Pause the pipeline.
+
+        - 'shutdown': Terminate the execution of the pipeline.
+      operationId: pipeline_action
+      parameters:
+        - name: pipeline_id
+          in: path
+          description: Unique pipeline identifier
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: action
+          in: path
+          description: Pipeline action [start, pause, shutdown]
+          required: true
+          schema:
+            type: string
+      responses:
+        '202':
+          description: Request accepted.
+        '400':
+          description: Pipeline desired state is not valid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                Action cannot be applied:
+                  description: >-
+                    Action is not applicable in the current state of the
+                    pipeline.
+                  value:
+                    details:
+                      current_status: ShuttingDown
+                      desired_status: Shutdown
+                      error: >-
+                        Cannot restart the pipeline while it is shutting down.
+                        Wait for the shutdown to complete before starting a new
+                        instance of the pipeline.
+                      pipeline_id: 2e79afe1-ff4d-44d3-af5f-9397de7746c0
+                      requested_status: Running
+                    error_code: IllegalPipelineStateTransition
+                    message: >-
+                      Action is not applicable in the current state of the
+                      pipeline: Cannot restart the pipeline while it is shutting
+                      down. Wait for the shutdown to complete before starting a
+                      new instance of the pipeline.
+                Invalid Pipeline ID:
+                  description: Specified pipeline id is not a valid uuid.
+                  value:
+                    details:
+                      error: >-
+                        invalid character: expected an optional prefix of
+                        `urn:uuid:` followed by [0-9a-fA-F-], found `n` at 1
+                      value: not_a_uuid
+                    error_code: InvalidUuidParam
+                    message: >-
+                      Invalid UUID string 'not_a_uuid': 'invalid character:
+                      expected an optional prefix of `urn:uuid:` followed by
+                      [0-9a-fA-F-], found `n` at 1'
+                Invalid action:
+                  description: Invalid action specified
+                  value:
+                    details:
+                      action: my_action
+                    error_code: InvalidPipelineAction
+                    message: >-
+                      Invalid pipeline action 'my_action'; valid actions are:
+                      'deploy', 'start', 'pause', or 'shutdown'
+                Invalid table or view reference:
+                  description: Connectors reference a view that doesn't exist.
+                  value:
+                    details:
+                      missing:
+                        - - ac_name
+                          - my_view
+                    error_code: ViewsNotInSchema
+                    message: >-
+                      Pipeline configuration specifies invalid connector->view
+                      pairs 'ac_name -> my_view': The view(s) don't exist in the
+                      program
+                Invalid table reference:
+                  description: Connectors reference a table that doesn't exist.
+                  value:
+                    details:
+                      missing:
+                        - - ac_name
+                          - my_table
+                    error_code: TablesNotInSchema
+                    message: >-
+                      Pipeline configuration specifies invalid connector->table
+                      pairs 'ac_name -> my_table': The table(s) don't exist in
+                      the program
+                Invalidtable or view reference:
+                  description: Connectors reference a view that doesn't exist.
+                  value:
+                    details:
+                      missing:
+                        - - ac_name
+                          - my_view
+                    error_code: ViewsNotInSchema
+                    message: >-
+                      Pipeline configuration specifies invalid connector->view
+                      pairs 'ac_name -> my_view': The view(s) don't exist in the
+                      program
+                Program has compilation errors:
+                  description: >-
+                    The program associated with the pipeline raised compilation
+                    error.
+                  value:
+                    details: null
+                    error_code: ProgramFailedToCompile
+                    message: >-
+                      The program attached to the pipeline did not compile
+                      successfully
+                Program not compiled:
+                  description: >-
+                    The program associated with this pipeline has not been
+                    compiled.
+                  value:
+                    details: null
+                    error_code: ProgramNotCompiled
+                    message: >-
+                      The program attached to the pipeline hasn't been compiled
+                      yet.
+                Program not set:
+                  description: Pipeline does not have a program set.
+                  value:
+                    details: null
+                    error_code: ProgramNotSet
+                    message: The pipeline does not have a program attached
+        '404':
+          description: Specified pipeline id does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details:
+                  pipeline_id: 2e79afe1-ff4d-44d3-af5f-9397de7746c0
+                error_code: UnknownPipeline
+                message: Unknown pipeline id '2e79afe1-ff4d-44d3-af5f-9397de7746c0'
+        '500':
+          description: Timeout waiting for the pipeline to initialize.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details:
+                  pipeline_id: 2e79afe1-ff4d-44d3-af5f-9397de7746c0
+                  timeout:
+                    nanos: 0
+                    secs: 10
+                error_code: PipelineInitializationTimeout
+                message: >-
+                  Waiting for pipeline 2e79afe1-ff4d-44d3-af5f-9397de7746c0
+                  initialization timed out after 10s
+  /programs:
+    get:
+      tags:
+        - Programs
+      summary: Fetch programs, optionally filtered by name or ID.
+      description: Fetch programs, optionally filtered by name or ID.
+      operationId: get_programs
+      parameters:
+        - name: id
+          in: query
+          description: Unique program identifier.
+          required: false
+          schema:
+            type: string
+            format: uuid
+            nullable: true
+        - name: name
+          in: query
+          description: Unique program name.
+          required: false
+          schema:
+            type: string
+            nullable: true
+        - name: with_code
+          in: query
+          description: |-
+            Option to include the SQL program code or not
+            in the Program objects returned by the query.
+            If false (default), the returned program object
+            will not include the code.
+          required: false
+          schema:
+            type: boolean
+            nullable: true
+      responses:
+        '200':
+          description: Programs retrieved successfully.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProgramDescr'
+        '404':
+          description: Specified program name or ID does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                Unknown program ID:
+                  value:
+                    details:
+                      program_id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+                    error_code: UnknownProgram
+                    message: Unknown program id '67e55044-10b1-426f-9247-bb680e5fe0c8'
+                Unknown program name:
+                  value:
+                    details:
+                      name: unknown_name
+                    error_code: UnknownName
+                    message: An entity with name unknown_name was not found
+    post:
+      tags:
+        - Programs
+      summary: Create a new program.
+      description: Create a new program.
+      operationId: new_program
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewProgramRequest'
+        required: true
+      responses:
+        '201':
+          description: Program created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NewProgramResp'
+        '409':
+          description: A program with this name already exists in the database.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details: null
+                error_code: DuplicateName
+                message: An entity with this name already exists
+  /programs/{program_id}:
+    get:
+      tags:
+        - Programs
+      summary: Fetch a program by ID.
+      description: Fetch a program by ID.
+      operationId: get_program
+      parameters:
+        - name: program_id
+          in: path
+          description: Unique program identifier
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: with_code
+          in: query
+          description: |-
+            Option to include the SQL program code or not
+            in the Program objects returned by the query.
+            If false (default), the returned program object
+            will not include the code.
+          required: false
+          schema:
+            type: boolean
+            nullable: true
+      responses:
+        '200':
+          description: Program retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgramDescr'
+        '404':
+          description: Specified program id does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details:
+                  program_id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+                error_code: UnknownProgram
+                message: Unknown program id '67e55044-10b1-426f-9247-bb680e5fe0c8'
+    delete:
+      tags:
+        - Programs
+      summary: Delete a program.
+      description: |-
+        Delete a program.
+
+        Deletion fails if there is at least one pipeline associated with the
+        program.
+      operationId: delete_program
+      parameters:
+        - name: program_id
+          in: path
+          description: Unique program identifier
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Program successfully deleted.
+        '400':
+          description: >-
+            Specified program id is referenced by a pipeline or is not a valid
+            uuid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                Invalid uuid:
+                  description: Specified program id is not a valid uuid.
+                  value:
+                    details:
+                      error: >-
+                        invalid character: expected an optional prefix of
+                        `urn:uuid:` followed by [0-9a-fA-F-], found `n` at 1
+                      value: not_a_uuid
+                    error_code: InvalidUuidParam
+                    message: >-
+                      Invalid UUID string 'not_a_uuid': 'invalid character:
+                      expected an optional prefix of `urn:uuid:` followed by
+                      [0-9a-fA-F-], found `n` at 1'
+                Program in use:
+                  description: Specified program id is referenced by a pipeline
+                  value:
+                    details:
+                      program_id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+                    error_code: ProgramInUseByPipeline
+                    message: >-
+                      Program id '67e55044-10b1-426f-9247-bb680e5fe0c8' is in
+                      use by a pipeline
+        '404':
+          description: Specified program id does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details:
+                  program_id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+                error_code: UnknownProgram
+                message: Unknown program id '67e55044-10b1-426f-9247-bb680e5fe0c8'
+    patch:
+      tags:
+        - Programs
+      summary: Change one or more of a program's code, description or name.
+      description: |-
+        Change one or more of a program's code, description or name.
+
+        If a program's code changes, any ongoing compilation gets cancelled,
+        the program status is reset to `None`, and the program version
+        is incremented by 1.
+
+        Changing only the program's name or description does not affect its
+        version or the compilation process.
+      operationId: update_program
+      parameters:
+        - name: program_id
+          in: path
+          description: Unique program identifier
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProgramRequest'
+        required: true
+      responses:
+        '200':
+          description: Program updated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateProgramResp'
+        '404':
+          description: Specified program id does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details:
+                  program_id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+                error_code: UnknownProgram
+                message: Unknown program id '67e55044-10b1-426f-9247-bb680e5fe0c8'
+        '409':
+          description: A program with this name already exists in the database.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details: null
+                error_code: DuplicateName
+                message: An entity with this name already exists
+  /programs/{program_id}/compile:
+    post:
+      tags:
+        - Programs
+      summary: Mark a program for compilation.
+      description: |-
+        Mark a program for compilation.
+
+        The client can track a program's compilation status by pollling the
+        `/program/{program_id}` or `/programs` endpoints, and
+        then checking the `status` field of the program object
+      operationId: compile_program
+      parameters:
+        - name: program_id
+          in: path
+          description: Unique program identifier
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompileProgramRequest'
+        required: true
+      responses:
+        '202':
+          description: Compilation request submitted.
+        '404':
+          description: Specified program id does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details:
+                  program_id: 67e55044-10b1-426f-9247-bb680e5fe0c8
+                error_code: UnknownProgram
+                message: Unknown program id '67e55044-10b1-426f-9247-bb680e5fe0c8'
+        '409':
+          description: >-
+            Program version specified in the request doesn't match the latest
+            program version in the database.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                details:
+                  latest_version: 5
+                error_code: OutdatedProgramVersion
+                message: 'Outdated program version. Latest version: ''5'''
+components:
+  schemas:
+    AttachedConnector:
+      type: object
+      description: Format to add attached connectors during a config update.
+      required:
+        - name
+        - is_input
+        - connector_id
+        - relation_name
+      properties:
+        connector_id:
+          $ref: '#/components/schemas/ConnectorId'
+        is_input:
+          type: boolean
+          description: Is this an input or an output?
+        name:
+          type: string
+          description: A unique identifier for this attachement.
+        relation_name:
+          type: string
+          description: The table or view this connector is attached to.
+    AttachedConnectorId:
+      type: string
+      format: uuid
+      description: Unique attached connector id.
+    AuthProvider:
+      oneOf:
+        - type: object
+          required:
+            - AwsCognito
+          properties:
+            AwsCognito:
+              $ref: '#/components/schemas/ProviderAwsCognito'
+        - type: object
+          required:
+            - GoogleIdentity
+          properties:
+            GoogleIdentity:
+              $ref: '#/components/schemas/ProviderGoogleIdentity'
+    Chunk:
+      type: object
+      description: >-
+        A set of updates to a SQL table or view.
+
+
+        The `sequence_number` field stores the offset of the chunk relative to
+        the
+
+        start of the stream and can be used to implement reliable delivery.
+
+        The payload is stored in the `bin_data`, `text_data`, or `json_data`
+        field
+
+        depending on the data format used.
+      required:
+        - sequence_number
+      properties:
+        bin_data:
+          type: string
+          format: binary
+          description: Base64 encoded binary payload, e.g., bincode.
+          nullable: true
+        json_data:
+          type: object
+          description: JSON payload.
+          nullable: true
+        sequence_number:
+          type: integer
+          format: int64
+          minimum: 0
+        text_data:
+          type: string
+          description: Text payload, e.g., CSV.
+          nullable: true
+    ColumnType:
+      type: object
+      description: |-
+        A SQL column type description.
+
+        Matches the Calcite JSON format.
+      required:
+        - type
+        - nullable
+      properties:
+        component:
+          allOf:
+            - $ref: '#/components/schemas/ColumnType'
+          nullable: true
+        nullable:
+          type: boolean
+          description: Does the type accept NULL values?
+        precision:
+          type: integer
+          format: int64
+          description: >-
+            Precision of the type.
+
+
+            # Examples
+
+            - `VARCHAR` sets precision to `-1`.
+
+            - `VARCHAR(255)` sets precision to `255`.
+
+            - `BIGINT`, `DATE`, `FLOAT`, `DOUBLE`, `GEOMETRY`, etc. sets
+            precision
+
+            to None
+
+            - `TIME`, `TIMESTAMP` set precision to `0`.
+          nullable: true
+        scale:
+          type: integer
+          format: int64
+          description: |-
+            The scale of the type.
+
+            # Example
+            - `DECIMAL(1,2)` sets scale to `2`.
+          nullable: true
+        type:
+          type: string
+          description: Identifier for the type (e.g., `VARCHAR`, `BIGINT`, `ARRAY` etc.)
+    CompileProgramRequest:
+      type: object
+      description: Request to queue a program for compilation.
+      required:
+        - version
+      properties:
+        version:
+          $ref: '#/components/schemas/Version'
+    ConnectorConfig:
+      type: object
+      description: A data connector's configuration
+      required:
+        - transport
+        - format
+      properties:
+        format:
+          $ref: '#/components/schemas/FormatConfig'
+        max_buffered_records:
+          type: integer
+          format: int64
+          description: >-
+            Backpressure threshold.
+
+
+            Maximal amount of records buffered by the endpoint before the
+            endpoint
+
+            is paused by the backpressure mechanism.  Note that this is not a
+
+            hard bound: there can be a small delay between the backpressure
+
+            mechanism is triggered and the endpoint is paused, during which more
+
+            data may be received.
+
+
+            The default is 1 million.
+          minimum: 0
+        transport:
+          $ref: '#/components/schemas/TransportConfig'
+    ConnectorDescr:
+      type: object
+      description: Connector descriptor.
+      required:
+        - connector_id
+        - name
+        - description
+        - config
+      properties:
+        config:
+          $ref: '#/components/schemas/ConnectorConfig'
+        connector_id:
+          $ref: '#/components/schemas/ConnectorId'
+        description:
+          type: string
+        name:
+          type: string
+    ConnectorId:
+      type: string
+      format: uuid
+      description: Unique connector id.
+    CsvEncoderConfig:
+      type: object
+      properties:
+        buffer_size_records:
+          type: integer
+          minimum: 0
+    CsvParserConfig:
+      type: object
+    EgressMode:
+      type: string
+      enum:
+        - watch
+        - snapshot
+    ErrorResponse:
+      type: object
+      description: Information returned by REST API endpoints on error.
+      required:
+        - message
+        - error_code
+        - details
+      properties:
+        details:
+          type: object
+          description: |-
+            Detailed error metadata.
+            The contents of this field is determined by `error_code`.
+        error_code:
+          type: string
+          description: Error code is a string that specifies this error type.
+          example: UnknownInputFormat
+        message:
+          type: string
+          description: Human-readable error message.
+          example: Unknown input format 'xml'.
+    Field:
+      type: object
+      description: |-
+        A SQL field.
+
+        Matches the Calcite JSON format.
+      required:
+        - name
+        - columntype
+      properties:
+        columntype:
+          $ref: '#/components/schemas/ColumnType'
+        name:
+          type: string
+    FileInputConfig:
+      type: object
+      description: Configuration for reading data from a file with [`FileInputTransport`].
+      required:
+        - path
+      properties:
+        buffer_size_bytes:
+          type: integer
+          description: |-
+            Read buffer size.
+
+            Default: when this parameter is not specified, a platform-specific
+            default is used.
+          nullable: true
+          minimum: 0
+        follow:
+          type: boolean
+          description: |-
+            Enable file following.
+
+            When `false`, the endpoint outputs an [`eoi`](`InputConsumer::eoi`)
+            message and stops upon reaching the end of file.  When `true`, the
+            endpoint will keep watching the file and outputting any new content
+            appended to it.
+        path:
+          type: string
+          description: File path.
+    FileOutputConfig:
+      type: object
+      description: Configuration for writing data to a file with [`FileOutputTransport`].
+      required:
+        - path
+      properties:
+        path:
+          type: string
+          description: File path.
+    FormatConfig:
+      type: object
+      description: |-
+        Data format specification used to parse raw data received from the
+        endpoint or to encode data sent to the endpoint.
+      required:
+        - name
+      properties:
+        config:
+          type: object
+          description: Format-specific parser or encoder configuration.
+        name:
+          type: string
+          description: Format name, e.g., "csv", "json", "bincode", etc.
+    InputEndpointConfig:
+      allOf:
+        - $ref: '#/components/schemas/ConnectorConfig'
+        - type: object
+          required:
+            - stream
+          properties:
+            stream:
+              type: string
+              description: >-
+                The name of the input stream of the circuit that this endpoint
+                is
+
+                connected to.
+      description: Describes an input connector configuration
+    JsonEncoderConfig:
+      type: object
+      properties:
+        array:
+          type: boolean
+        buffer_size_records:
+          type: integer
+          minimum: 0
+        update_format:
+          $ref: '#/components/schemas/JsonUpdateFormat'
+    JsonFlavor:
+      type: string
+      description: Specifies JSON encoding used of table records.
+      enum:
+        - default
+        - debezium_mysql
+    JsonParserConfig:
+      type: object
+      description: >-
+        JSON parser configuration.
+
+
+        Describes the shape of an input JSON stream.
+
+
+        # Examples
+
+
+        A configuration with `update_format="raw"` and `array=false`
+
+        is used to parse a stream of JSON objects without any envelope
+
+        that get inserted in the input table.
+
+
+        ```json
+
+        {"b": false, "i": 100, "s": "foo"}
+
+        {"b": true, "i": 5, "s": "bar"}
+
+        ```
+
+
+        A configuration with `update_format="insert_delete"` and
+
+        `array=false` is used to parse a stream of JSON data change events
+
+        in the insert/delete format:
+
+
+        ```json
+
+        {"delete": {"b": false, "i": 15, "s": ""}}
+
+        {"insert": {"b": false, "i": 100, "s": "foo"}}
+
+        ```
+
+
+        A configuration with `update_format="insert_delete"` and
+
+        `array=true` is used to parse a stream of JSON arrays
+
+        where each array contains multiple data change events in
+
+        the insert/delete format.
+
+
+        ```json
+
+        [{"insert": {"b": true, "i": 0}}, {"delete": {"b": false, "i": 100, "s":
+        "foo"}}]
+
+        ```
+      properties:
+        array:
+          type: boolean
+          description: >-
+            Set to `true` if updates in this stream are packaged into JSON
+            arrays.
+
+
+            # Example
+
+
+            ```json
+
+            [{"b": true, "i": 0},{"b": false, "i": 100, "s": "foo"}]
+
+            ```
+        json_flavor:
+          $ref: '#/components/schemas/JsonFlavor'
+        update_format:
+          $ref: '#/components/schemas/JsonUpdateFormat'
+    JsonUpdateFormat:
+      type: string
+      description: |-
+        Supported JSON data change event formats.
+
+        Each element in a JSON-formatted input stream specifies
+        an update to one or more records in an input table.  We support
+        several different ways to represent such updates.
+      enum:
+        - insert_delete
+        - weighted
+        - debezium
+        - snowflake
+        - raw
+    KafkaInputConfig:
+      type: object
+      required:
+        - topics
+      properties:
+        group_join_timeout_secs:
+          type: integer
+          format: int32
+          description: >-
+            Maximum timeout in seconds to wait for the endpoint to join the
+            Kafka consumer group during initialization.
+        log_level:
+          type: string
+          description: Kafka logging levels.
+          enum:
+            - emerg
+            - alert
+            - critical
+            - error
+            - warning
+            - notice
+            - info
+            - debug
+        topics:
+          type: array
+          items:
+            type: string
+      additionalProperties:
+        type: string
+        description: >-
+          Options passed directly to `rdkafka`.
+
+
+          See [`librdkafka`
+          options](https://github.com/edenhill/librdkafka/blob/master/CONFIGURATION.md)
+
+          used to configure the Kafka producer.
+    KafkaLogLevel:
+      type: string
+      description: Kafka logging levels.
+      enum:
+        - emerg
+        - alert
+        - critical
+        - error
+        - warning
+        - notice
+        - info
+        - debug
+    KafkaOutputConfig:
+      type: object
+      required:
+        - topic
+      properties:
+        log_level:
+          type: string
+          description: Kafka logging levels.
+          enum:
+            - emerg
+            - alert
+            - critical
+            - error
+            - warning
+            - notice
+            - info
+            - debug
+        max_inflight_messages:
+          type: integer
+          format: int32
+          description: >-
+            Maximum number of unacknowledged messages buffered by the Kafka
+            producer.
+
+
+            Kafka producer buffers outgoing messages until it receives an
+
+            acknowledgement from the broker.  This configuration parameter
+
+            bounds the number of unacknowledged messages.  When the number of
+
+            unacknowledged messages reaches this limit, sending of a new message
+
+            blocks until additional acknowledgements arrive from the broker.
+
+
+            Defaults to 1000.
+        topic:
+          type: string
+      additionalProperties:
+        type: string
+        description: >-
+          Options passed directly to `rdkafka`.
+
+
+          See [`librdkafka`
+          options](https://github.com/edenhill/librdkafka/blob/master/CONFIGURATION.md)
+
+          used to configure the Kafka producer.
+    NeighborhoodQuery:
+      type: object
+      description: |-
+        A request to output a specific neighborhood of a table or view.
+        The neighborhood is defined in terms of its central point (`anchor`)
+        and the number of rows preceding and following the anchor to output.
+      required:
+        - before
+        - after
+      properties:
+        after:
+          type: integer
+          format: int32
+          minimum: 0
+        anchor:
+          type: object
+          nullable: true
+        before:
+          type: integer
+          format: int32
+          minimum: 0
+    NewConnectorRequest:
+      type: object
+      description: Request to create a new connector.
+      required:
+        - name
+        - description
+        - config
+      properties:
+        config:
+          $ref: '#/components/schemas/ConnectorConfig'
+        description:
+          type: string
+          description: Connector description.
+        name:
+          type: string
+          description: Connector name.
+    NewConnectorResp:
+      type: object
+      description: Response to a connector creation request.
+      required:
+        - connector_id
+      properties:
+        connector_id:
+          $ref: '#/components/schemas/ConnectorId'
+    NewPipelineRequest:
+      type: object
+      description: Request to create a new pipeline.
+      required:
+        - name
+        - description
+        - config
+      properties:
+        config:
+          $ref: '#/components/schemas/RuntimeConfig'
+        connectors:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttachedConnector'
+          description: Attached connectors.
+          nullable: true
+        description:
+          type: string
+          description: Config description.
+        name:
+          type: string
+          description: Config name.
+        program_id:
+          allOf:
+            - $ref: '#/components/schemas/ProgramId'
+          nullable: true
+    NewPipelineResp:
+      type: object
+      description: Response to a pipeline creation request.
+      required:
+        - pipeline_id
+        - version
+      properties:
+        pipeline_id:
+          $ref: '#/components/schemas/PipelineId'
+        version:
+          $ref: '#/components/schemas/Version'
+    NewProgramRequest:
+      type: object
+      description: Request to create a new DBSP program.
+      required:
+        - name
+        - description
+        - code
+      properties:
+        code:
+          type: string
+          description: SQL code of the program.
+          example: CREATE TABLE Example(name varchar);
+        description:
+          type: string
+          description: Program description.
+          example: Example description
+        name:
+          type: string
+          description: Program name.
+          example: Example program
+    NewProgramResp:
+      type: object
+      description: Response to a new program request.
+      required:
+        - program_id
+        - version
+      properties:
+        program_id:
+          $ref: '#/components/schemas/ProgramId'
+        version:
+          $ref: '#/components/schemas/Version'
+    OutputEndpointConfig:
+      allOf:
+        - $ref: '#/components/schemas/ConnectorConfig'
+        - type: object
+          required:
+            - stream
+          properties:
+            stream:
+              type: string
+              description: >-
+                The name of the output stream of the circuit that this endpoint
+                is
+
+                connected to.
+      description: Describes an output connector configuration
+    OutputQuery:
+      type: string
+      description: |-
+        A query over an output stream.
+
+        We currently do not support ad hoc queries.  Instead the client can use
+        three pre-defined queries to inspect the contents of a table or view.
+      enum:
+        - table
+        - neighborhood
+        - quantiles
+    Pipeline:
+      type: object
+      description: |-
+        State of a pipeline, including static configuration
+        and runtime status.
+      required:
+        - descriptor
+        - state
+      properties:
+        descriptor:
+          $ref: '#/components/schemas/PipelineDescr'
+        state:
+          $ref: '#/components/schemas/PipelineRuntimeState'
+    PipelineConfig:
+      allOf:
+        - type: object
+          description: Global pipeline configuration settings.
+          properties:
+            cpu_profiler:
+              type: boolean
+              description: Enable CPU profiler.
+            max_buffering_delay_usecs:
+              type: integer
+              format: int64
+              description: >-
+                Maximal delay in microseconds to wait for
+                `min_batch_size_records` to
+
+                get buffered by the controller, defaults to 0.
+              minimum: 0
+            min_batch_size_records:
+              type: integer
+              format: int64
+              description: >-
+                Minimal input batch size.
+
+
+                The controller delays pushing input records to the circuit until
+                at
+
+                least `min_batch_size_records` records have been received (total
+
+                across all endpoints) or `max_buffering_delay_usecs`
+                microseconds
+
+                have passed since at least one input records has been buffered.
+
+                Defaults to 0.
+              minimum: 0
+            workers:
+              type: integer
+              format: int32
+              description: Number of DBSP worker threads.
+              minimum: 0
+        - type: object
+          required:
+            - inputs
+          properties:
+            inputs:
+              type: object
+              description: Input endpoint configuration.
+              additionalProperties:
+                $ref: '#/components/schemas/InputEndpointConfig'
+            name:
+              type: string
+              description: Pipeline name
+              nullable: true
+            outputs:
+              type: object
+              description: Output endpoint configuration.
+              additionalProperties:
+                $ref: '#/components/schemas/OutputEndpointConfig'
+      description: |-
+        Pipeline configuration specified by the user when creating
+        a new pipeline instance.
+    PipelineDescr:
+      type: object
+      description: Pipeline descriptor.
+      required:
+        - pipeline_id
+        - version
+        - name
+        - description
+        - config
+        - attached_connectors
+      properties:
+        attached_connectors:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttachedConnector'
+        config:
+          $ref: '#/components/schemas/RuntimeConfig'
+        description:
+          type: string
+        name:
+          type: string
+        pipeline_id:
+          $ref: '#/components/schemas/PipelineId'
+        program_id:
+          allOf:
+            - $ref: '#/components/schemas/ProgramId'
+          nullable: true
+        version:
+          $ref: '#/components/schemas/Version'
+    PipelineId:
+      type: string
+      format: uuid
+      description: Unique pipeline id.
+    PipelineRevision:
+      type: object
+      description: |-
+        A pipeline revision is a versioned, immutable configuration struct that
+        contains all information necessary to run a pipeline.
+      required:
+        - revision
+        - pipeline
+        - connectors
+        - program
+        - config
+      properties:
+        config:
+          $ref: '#/components/schemas/PipelineConfig'
+        connectors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConnectorDescr'
+          description: The versioned connectors.
+        pipeline:
+          $ref: '#/components/schemas/PipelineDescr'
+        program:
+          $ref: '#/components/schemas/ProgramDescr'
+        revision:
+          $ref: '#/components/schemas/Revision'
+    PipelineRuntimeState:
+      type: object
+      description: Runtime state of the pipeine.
+      required:
+        - location
+        - desired_status
+        - current_status
+        - status_since
+        - created
+      properties:
+        created:
+          type: string
+          format: date-time
+          description: Time when the pipeline started executing.
+        current_status:
+          $ref: '#/components/schemas/PipelineStatus'
+        desired_status:
+          $ref: '#/components/schemas/PipelineStatus'
+        error:
+          allOf:
+            - $ref: '#/components/schemas/ErrorResponse'
+          nullable: true
+        location:
+          type: string
+          description: |-
+            Location where the pipeline can be reached at runtime.
+            e.g., a TCP port number or a URI.
+        status_since:
+          type: string
+          format: date-time
+          description: |-
+            Time when the pipeline was assigned its current status
+            of the pipeline.
+    PipelineStatus:
+      type: string
+      description: >-
+        Pipeline status.
+
+
+        This type represents the state of the pipeline tracked by the pipeline
+
+        runner and observed by the API client via the `GET /pipeline` endpoint.
+
+
+        ### The lifecycle of a pipeline
+
+
+        The following automaton captures the lifecycle of the pipeline. 
+        Individual
+
+        states and transitions of the automaton are described below.
+
+
+        * In addition to the transitions shown in the diagram, all states have
+        an
+
+        implicit "forced shutdown" transition to the `Shutdown` state.  This
+
+        transition is triggered when the pipeline runner is unable to
+        communicate
+
+        with the pipeline and thereby forces a shutdown.
+
+
+        * States labeled with the hourglass symbol (⌛) are **timed** states. 
+        The
+
+        automaton stays in timed state until the corresponding operation
+        completes
+
+        or until the runner performs a forced shutdown of the pipeline after a
+
+        pre-defined timeout perioud.
+
+
+        * State transitions labeled with API endpoint names (`/deploy`,
+        `/start`,
+
+        `/pause`, `/shutdown`) are triggered by invoking corresponding endpoint,
+
+        e.g., `POST /v0/pipelines/{pipeline_id}/start`.
+
+
+        ```text
+
+        Shutdown◄────┐
+
+        │         │
+
+        /deploy│         │
+
+        │   ⌛ShuttingDown
+
+        ▼         ▲
+
+        ⌛Provisioning    │
+
+        │         │
+
+        Provisioned        │         │
+
+        ▼         │/shutdown
+
+        ⌛Initializing    │
+
+        │         │
+
+        ┌────────┴─────────┴─┐
+
+        │        ▼           │
+
+        │      Paused        │
+
+        │      │    ▲        │
+
+        │/start│    │/pause  │
+
+        │      ▼    │        │
+
+        │     Running        │
+
+        └──────────┬─────────┘
+
+        │
+
+        ▼
+
+        Failed
+
+        ```
+
+
+        ### Desired and actual status
+
+
+        We use the desired state model to manage the lifecycle of a pipeline.
+
+        In this model, the pipeline has two status attributes associated with
+
+        it at runtime: the **desired** status, which represents what the user
+
+        would like the pipeline to do, and the **current** status, which
+
+        represents the actual state of the pipeline.  The pipeline runner
+
+        service continuously monitors both fields and steers the pipeline
+
+        towards the desired state specified by the user.
+
+        Only three of the states in the pipeline automaton above can be
+
+        used as desired statuses: `Paused`, `Running`, and `Shutdown`.
+
+        These statuses are selected by invoking REST endpoints shown
+
+        in the diagram.
+
+
+        The user can monitor the current state of the pipeline via the
+
+        `/status` endpoint, which returns an object of type [`Pipeline`].
+
+        In a typical scenario, the user first sets
+
+        the desired state, e.g., by invoking the `/deploy` endpoint, and
+
+        then polls the `GET /pipeline` endpoint to monitor the actual status
+
+        of the pipeline until its `state.current_status` attribute changes
+
+        to "paused" indicating that the pipeline has been successfully
+
+        initialized, or "failed", indicating an error.
+      enum:
+        - Shutdown
+        - Provisioning
+        - Initializing
+        - Paused
+        - Running
+        - ShuttingDown
+        - Failed
+    ProgramCodeResp:
+      type: object
+      description: Response to a program code request.
+      required:
+        - program
+        - code
+      properties:
+        code:
+          type: string
+          description: Program code.
+        program:
+          $ref: '#/components/schemas/ProgramDescr'
+    ProgramDescr:
+      type: object
+      description: Program descriptor.
+      required:
+        - program_id
+        - name
+        - description
+        - version
+        - status
+      properties:
+        code:
+          type: string
+          description: SQL code
+          nullable: true
+        description:
+          type: string
+          description: Program description.
+        name:
+          type: string
+          description: Program name (doesn't have to be unique).
+        program_id:
+          $ref: '#/components/schemas/ProgramId'
+        schema:
+          allOf:
+            - $ref: '#/components/schemas/ProgramSchema'
+          nullable: true
+        status:
+          $ref: '#/components/schemas/ProgramStatus'
+        version:
+          $ref: '#/components/schemas/Version'
+    ProgramId:
+      type: string
+      format: uuid
+      description: Unique program id.
+    ProgramSchema:
+      type: object
+      description: |-
+        A struct containting the tables (inputs) and views for a program.
+
+        Parse from the JSON data-type of the DDL generated by the SQL compiler.
+      required:
+        - inputs
+        - outputs
+      properties:
+        inputs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Relation'
+        outputs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Relation'
+    ProgramStatus:
+      oneOf:
+        - type: string
+          description: |-
+            Initial state: program has been created or modified, but the user
+            hasn't yet started compiling the program.
+          enum:
+            - None
+        - type: string
+          description: |-
+            Compilation request received from the user; program has been placed
+            in the queue.
+          enum:
+            - Pending
+        - type: string
+          description: Compilation of SQL -> Rust in progress.
+          enum:
+            - CompilingSql
+        - type: string
+          description: Compiling Rust -> executable in progress
+          enum:
+            - CompilingRust
+        - type: string
+          description: Compilation succeeded.
+          enum:
+            - Success
+        - type: object
+          required:
+            - SqlError
+          properties:
+            SqlError:
+              type: array
+              items:
+                $ref: '#/components/schemas/SqlCompilerMessage'
+              description: SQL compiler returned an error.
+        - type: object
+          required:
+            - RustError
+          properties:
+            RustError:
+              type: string
+              description: Rust compiler returned an error.
+        - type: object
+          required:
+            - SystemError
+          properties:
+            SystemError:
+              type: string
+              description: System/OS returned an error when trying to invoke commands.
+      description: Program compilation status.
+    ProviderAwsCognito:
+      type: object
+      required:
+        - jwk_uri
+        - login_url
+        - logout_url
+      properties:
+        jwk_uri:
+          type: string
+        login_url:
+          type: string
+        logout_url:
+          type: string
+    ProviderGoogleIdentity:
+      type: object
+      required:
+        - jwk_uri
+        - client_id
+      properties:
+        client_id:
+          type: string
+        jwk_uri:
+          type: string
+    Relation:
+      type: object
+      description: |-
+        A SQL table or view. It has a name and a list of fields.
+
+        Matches the Calcite JSON format.
+      required:
+        - name
+        - fields
+      properties:
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/Field'
+        name:
+          type: string
+    Revision:
+      type: string
+      format: uuid
+      description: Revision number.
+    RuntimeConfig:
+      type: object
+      description: Global pipeline configuration settings.
+      properties:
+        cpu_profiler:
+          type: boolean
+          description: Enable CPU profiler.
+        max_buffering_delay_usecs:
+          type: integer
+          format: int64
+          description: >-
+            Maximal delay in microseconds to wait for `min_batch_size_records`
+            to
+
+            get buffered by the controller, defaults to 0.
+          minimum: 0
+        min_batch_size_records:
+          type: integer
+          format: int64
+          description: |-
+            Minimal input batch size.
+
+            The controller delays pushing input records to the circuit until at
+            least `min_batch_size_records` records have been received (total
+            across all endpoints) or `max_buffering_delay_usecs` microseconds
+            have passed since at least one input records has been buffered.
+            Defaults to 0.
+          minimum: 0
+        workers:
+          type: integer
+          format: int32
+          description: Number of DBSP worker threads.
+          minimum: 0
+    SqlCompilerMessage:
+      type: object
+      description: >-
+        A SQL compiler error.
+
+
+        The SQL compiler returns a list of errors in the following JSON format
+        if
+
+        it's invoked with the `-je` option.
+
+
+        ```ignore
+
+        [ {
+
+        "startLineNumber" : 14,
+
+        "startColumn" : 13,
+
+        "endLineNumber" : 14,
+
+        "endColumn" : 13,
+
+        "warning" : false,
+
+        "errorType" : "Error parsing SQL",
+
+        "message" : "Encountered \"<EOF>\" at line 14, column 13."
+
+        } ]
+
+        ```
+      required:
+        - startLineNumber
+        - startColumn
+        - endLineNumber
+        - endColumn
+        - warning
+        - errorType
+        - message
+      properties:
+        endColumn:
+          type: integer
+          minimum: 0
+        endLineNumber:
+          type: integer
+          minimum: 0
+        errorType:
+          type: string
+        message:
+          type: string
+        startColumn:
+          type: integer
+          minimum: 0
+        startLineNumber:
+          type: integer
+          minimum: 0
+        warning:
+          type: boolean
+    TenantId:
+      type: string
+      format: uuid
+    TransportConfig:
+      type: object
+      description: Transport endpoint configuration.
+      required:
+        - name
+      properties:
+        config:
+          type: object
+          description: |-
+            Transport-specific endpoint configuration passed to
+            `crate::OutputTransport::new_endpoint`
+            and `crate::InputTransport::new_endpoint`.
+        name:
+          type: string
+          description: Data transport name, e.g., `file`, `kafka`, `kinesis`
+    UpdateConnectorRequest:
+      type: object
+      description: Request to update an existing data-connector.
+      required:
+        - name
+        - description
+      properties:
+        config:
+          allOf:
+            - $ref: '#/components/schemas/ConnectorConfig'
+          nullable: true
+        description:
+          type: string
+          description: New connector description.
+        name:
+          type: string
+          description: New connector name.
+    UpdateConnectorResp:
+      type: object
+      description: Response to a config update request.
+    UpdatePipelineRequest:
+      type: object
+      description: Request to update an existing pipeline.
+      required:
+        - name
+        - description
+      properties:
+        config:
+          allOf:
+            - $ref: '#/components/schemas/RuntimeConfig'
+          nullable: true
+        connectors:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttachedConnector'
+          description: |-
+            Attached connectors.
+
+            - If absent, existing connectors will be kept unmodified.
+
+            - If present all existing connectors will be replaced with the new
+            specified list.
+          nullable: true
+        description:
+          type: string
+          description: New pipeline description.
+        name:
+          type: string
+          description: New pipeline name.
+        program_id:
+          allOf:
+            - $ref: '#/components/schemas/ProgramId'
+          nullable: true
+    UpdatePipelineResp:
+      type: object
+      description: Response to a config update request.
+      required:
+        - version
+      properties:
+        version:
+          $ref: '#/components/schemas/Version'
+    UpdateProgramRequest:
+      type: object
+      description: Update program request.
+      required:
+        - name
+      properties:
+        code:
+          type: string
+          description: |-
+            New SQL code for the program or `None` to keep existing program
+            code unmodified.
+          nullable: true
+        description:
+          type: string
+          description: New description for the program.
+        name:
+          type: string
+          description: New name for the program.
+    UpdateProgramResp:
+      type: object
+      description: Response to a program update request.
+      required:
+        - version
+      properties:
+        version:
+          $ref: '#/components/schemas/Version'
+    UrlInputConfig:
+      type: object
+      description: |-
+        Configuration for reading data from an HTTP or HTTPS URL with
+        [`UrlInputTransport`].
+      required:
+        - path
+      properties:
+        path:
+          type: string
+          description: URL.
+    Version:
+      type: integer
+      format: int64
+      description: Version number.
+tags:
+  - name: Manager
+    description: Configure system behavior
+  - name: Programs
+    description: Manage programs
+  - name: Pipelines
+    description: Manage pipelines
+  - name: Connectors
+    description: Manage data connectors
