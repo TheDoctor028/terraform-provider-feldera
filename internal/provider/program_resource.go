@@ -155,16 +155,21 @@ func (r *ProgramResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	uid, err := uuidFromStr(data, resp)
+	uid, err := uuid.Parse(data.Id.String())
 	if err != nil {
+		resp.Diagnostics.AddError("Parser Error", fmt.Sprintf("Unable to parse program id, got error: %s", err))
 		return
 	}
 
-	clientResp, err := r.providerData.Client.GetProgramWithResponse(ctx, uid, nil)
-	if err != nil || clientResp.JSON200 == nil {
+	clientResp, err := r.providerData.Client.GetProgramWithResponse(ctx, uid, &api_v0.GetProgramParams{})
+	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read program, got error: %s", err))
 		return
+	} else if clientResp.JSON200 == nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read program, got status: %s resp: %s", clientResp.Status(), clientResp.Body))
+		return
 	}
+
 	data.Name = types.StringValue(clientResp.JSON200.Name)
 	data.Version = types.Int64Value(clientResp.JSON200.Version)
 	data.Description = types.StringValue(clientResp.JSON200.Description)
@@ -186,8 +191,9 @@ func (r *ProgramResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	uid, err := uuidFromStr(data, (*resource.ReadResponse)(resp))
+	uid, err := uuid.Parse(data.Id.String())
 	if err != nil {
+		resp.Diagnostics.AddError("Parser Error", fmt.Sprintf("Unable to parse program id, got error: %s", err))
 		return
 	}
 
@@ -201,6 +207,8 @@ func (r *ProgramResource) Update(ctx context.Context, req resource.UpdateRequest
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update program, got error: %s", err))
 		return
 	}
+
+	data.Version = types.Int64Value(httpRes.JSON200.Version)
 
 	// TODO compile
 
@@ -233,13 +241,4 @@ func (r *ProgramResource) Delete(ctx context.Context, req resource.DeleteRequest
 
 func (r *ProgramResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
-}
-
-func uuidFromStr(data ProgramResourceModel, resp *resource.ReadResponse) (uuid.UUID, error) {
-	uid, err := uuid.FromBytes([]byte(data.Id.String()))
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse program id, got error: %s", err))
-		return uuid.UUID{}, err
-	}
-	return uid, nil
 }
