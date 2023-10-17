@@ -225,13 +225,14 @@ func (r *ProgramResource) Delete(ctx context.Context, req resource.DeleteRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	uid, err := uuid.FromBytes([]byte(data.Id.String()))
+
+	uid, err := uuid.Parse(data.Id.String())
 	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to parse program id, got error: %s", err))
+		resp.Diagnostics.AddError("Parser Error", fmt.Sprintf("Unable to parse program id, got error: %s", err))
 		return
 	}
 
-	_, err = r.providerData.Client.DeleteProgramWithResponse(ctx, uid, nil)
+	_, err = r.providerData.Client.DeleteProgramWithResponse(ctx, uid)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete program, got error: %s", err))
 		return
